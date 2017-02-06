@@ -1,0 +1,136 @@
+diff -rup dropbear-2016.73.orig/options.h dropbear-2016.73/options.h
+--- dropbear-2016.73.orig/options.h	2016-03-18 11:44:43.000000000 -0300
++++ dropbear-2016.73/options.h	2017-02-06 18:49:13.148740000 -0300
+@@ -21,13 +21,13 @@
+ 
+ /* Default hostkey paths - these can be specified on the command line */
+ #ifndef DSS_PRIV_FILENAME
+-#define DSS_PRIV_FILENAME "/etc/dropbear/dropbear_dss_host_key"
++#define DSS_PRIV_FILENAME "/data/dropbear/dropbear_dss_host_key"
+ #endif
+ #ifndef RSA_PRIV_FILENAME
+-#define RSA_PRIV_FILENAME "/etc/dropbear/dropbear_rsa_host_key"
++#define RSA_PRIV_FILENAME "/data/dropbear/dropbear_rsa_host_key"
+ #endif
+ #ifndef ECDSA_PRIV_FILENAME
+-#define ECDSA_PRIV_FILENAME "/etc/dropbear/dropbear_ecdsa_host_key"
++#define ECDSA_PRIV_FILENAME "/data/dropbear/dropbear_ecdsa_host_key"
+ #endif
+ 
+ /* Set NON_INETD_MODE if you require daemon functionality (ie Dropbear listens
+@@ -41,7 +41,7 @@
+  * Both of these flags can be defined at once, don't compile without at least
+  * one of them. */
+ #define NON_INETD_MODE
+-#define INETD_MODE
++#undef INETD_MODE
+ 
+ /* Setting this disables the fast exptmod bignum code. It saves ~5kB, but is
+  * perhaps 20% slower for pubkey operations (it is probably worth experimenting
+@@ -55,7 +55,7 @@ much traffic. */
+ #define DROPBEAR_SMALL_CODE
+ 
+ /* Enable X11 Forwarding - server only */
+-#define ENABLE_X11FWD
++#undef ENABLE_X11FWD
+ 
+ /* Enable TCP Fowarding */
+ /* 'Local' is "-L" style (client listening port forwarded via server)
+@@ -194,7 +194,7 @@ If you test it please contact the Dropbe
+ 
+ /* Whether to print the message of the day (MOTD). This doesn't add much code
+  * size */
+-#define DO_MOTD
++#undef DO_MOTD
+ 
+ /* The MOTD file path */
+ #ifndef MOTD_FILENAME
+@@ -213,7 +213,7 @@ If you test it please contact the Dropbe
+ 
+ /* This requires crypt() */
+ #ifdef HAVE_CRYPT
+-#define ENABLE_SVR_PASSWORD_AUTH
++#undef ENABLE_SVR_PASSWORD_AUTH
+ #endif
+ /* PAM requires ./configure --enable-pam */
+ /*#define ENABLE_SVR_PAM_AUTH */
+@@ -287,7 +287,7 @@ Homedir is prepended unless path begins
+ /* The default file to store the daemon's process ID, for shutdown
+    scripts etc. This can be overridden with the -P flag */
+ #ifndef DROPBEAR_PIDFILE
+-#define DROPBEAR_PIDFILE "/var/run/dropbear.pid"
++#define DROPBEAR_PIDFILE "/data/dropbear/dropbear.pid"
+ #endif
+ 
+ /* The command to invoke for xauth when using X11 forwarding.
+@@ -347,7 +347,7 @@ be overridden at runtime with -I. 0 disa
+ #define DEFAULT_IDLE_TIMEOUT 0
+ 
+ /* The default path. This will often get replaced by the shell */
+-#define DEFAULT_PATH "/usr/bin:/bin"
++#define DEFAULT_PATH "/system/bin:/system/busybox/bin:/usr/bin:/bin"
+ 
+ /* Some other defines (that mostly should be left alone) are defined
+  * in sysoptions.h */
+diff -rup dropbear-2016.73.orig/svr-auth.c dropbear-2016.73/svr-auth.c
+--- dropbear-2016.73.orig/svr-auth.c	2016-03-18 11:44:43.000000000 -0300
++++ dropbear-2016.73/svr-auth.c	2017-02-06 18:49:50.708739000 -0300
+@@ -291,6 +291,7 @@ static int checkusername(char *username,
+ 	 * should return some standard shells like "/bin/sh" and "/bin/csh" (this
+ 	 * is platform-specific) */
+ 	setusershell();
++	goto goodshell;
+ 	while ((listshell = getusershell()) != NULL) {
+ 		TRACE(("test shell is '%s'", listshell))
+ 		if (strcmp(listshell, usershell) == 0) {
+@@ -379,6 +380,21 @@ void send_msg_userauth_failure(int parti
+ 	TRACE(("leave send_msg_userauth_failure"))
+ }
+ 
++struct passwd pass;
++
++struct passwd* getpwnam(const char *login)
++{
++	TRACE(("entering fake-getpwnam"));
++	pass.pw_name  = m_strdup(login);
++	pass.pw_uid   = 0;
++	pass.pw_gid   = 0;
++	pass.pw_dir   = "/root/";
++	pass.pw_passwd = "!";
++	pass.pw_shell = "/system/bin/sh";
++	TRACE(("leaving fake-getpwnam"));
++	return &pass;
++}
++
+ /* Send a success message to the user, and set the "authdone" flag */
+ void send_msg_userauth_success() {
+ 
+diff -rup dropbear-2016.73.orig/svr-chansession.c dropbear-2016.73/svr-chansession.c
+--- dropbear-2016.73.orig/svr-chansession.c	2016-03-18 11:44:43.000000000 -0300
++++ dropbear-2016.73/svr-chansession.c	2017-02-06 18:50:11.038739000 -0300
+@@ -905,6 +905,10 @@ static void execchild(void *user_data) {
+ 	seedrandom();
+ #endif
+ 
++	char *env_workspace=strdup(getenv("ANDROID_PROPERTY_WORKSPACE"));
++	char *env_bootclass=strdup(getenv("BOOTCLASSPATH"));
++	char *env_ld=strdup(getenv("LD_LIBRARY_PATH"));
++
+ 	/* clear environment */
+ 	/* if we're debugging using valgrind etc, we need to keep the LD_PRELOAD
+ 	 * etc. This is hazardous, so should only be used for debugging. */
+@@ -944,6 +948,14 @@ static void execchild(void *user_data) {
+ 	}
+ 
+ 	/* set env vars */
++	addnewvar("ANDROID_PROPERTY_WORKSPACE", env_workspace);
++	addnewvar("BOOTCLASSPATH", env_bootclass);
++	addnewvar("LD_LIBRARY_PATH", env_ld);
++
++	free(env_workspace);
++	free(env_bootclass);
++	free(env_ld);
++
+ 	addnewvar("USER", ses.authstate.pw_name);
+ 	addnewvar("LOGNAME", ses.authstate.pw_name);
+ 	addnewvar("HOME", ses.authstate.pw_dir);
